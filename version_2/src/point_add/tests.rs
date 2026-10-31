@@ -1,7 +1,7 @@
 use super::arith::{self, Field};
 use super::divide::divide;
 use super::gates::{lower, Builder, Q};
-use super::point::point_add;
+use super::point::{point_add, Coord};
 use crate::circuit::{analyze_ops, BitId, QubitOrBit};
 use crate::sim::Simulator;
 use alloy_primitives::U256;
@@ -9,6 +9,10 @@ use sha3::digest::{ExtendableOutput, Update};
 use sha3::Shake256;
 
 const SCRATCH: BitId = BitId(4000);
+
+thread_local! {
+    static COHERENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 struct Rng(u64);
 impl Rng {
@@ -35,7 +39,7 @@ fn breg(b: &[BitId]) -> Vec<QubitOrBit> {
 /// every other qubit is |0⟩ and the phase is clean.
 fn run(b: &Builder, inputs: &[(Vec<QubitOrBit>, Vec<u64>)], outputs: &[Vec<QubitOrBit>]) -> Vec<Vec<u64>> {
     let mut ops = Vec::new();
-    lower(&b.gates, SCRATCH, &mut ops);
+    lower(&b.gates, SCRATCH, COHERENT.with(|c| c.get()), &mut ops);
     let (nq, nb, _, _) = analyze_ops(ops.iter());
     let nq = nq.max(b.width());
     let mut h = Shake256::default();
@@ -203,6 +207,33 @@ fn divide_every_divisor() {
     }
 }
 
+/// Division by every nonzero divisor for several primes and widths, including
+/// primes far below 2^n (where the width schedule has the most slack) and
+/// just below it.
+#[test]
+fn divide_every_divisor_many_primes() {
+    for (p, n) in [(131u64, 8usize), (193, 8), (241, 8), (257, 9), (311, 9), (509, 9), (1021, 10), (11, 4), (13, 4)] {
+        let f = Field { p: U256::from(p), n };
+        let mut rng = Rng(p);
+        let divisors: Vec<u64> = (1..p).collect();
+        for chunk in divisors.chunks(64) {
+            let mut b = Builder::new();
+            let x = b.alloc_n(n);
+            let y = b.alloc_n(n);
+            let (x_in, y_in) = (x.clone(), y.clone());
+            let a = divide(&f, &mut b, &x, y);
+            let mut xv = chunk.to_vec();
+            xv.resize(64, chunk[0]);
+            let yv: Vec<u64> = (0..64).map(|_| rng.below(p)).collect();
+            let out = run(&b, &[(qreg(&x_in), xv.clone()), (qreg(&y_in), yv.clone())], &[qreg(&x), qreg(&a)]);
+            for i in 0..64 {
+                assert_eq!(out[0][i], xv[i], "x restored, p={p}");
+                assert_eq!(out[1][i], yv[i] * pow(xv[i], p - 2, p) % p, "y/x, p={p}, x={}", xv[i]);
+            }
+        }
+    }
+}
+
 /// Small curve y^2 = x^3 + 7 over F_251, exhaustively enumerated.
 fn curve_points() -> Vec<(u64, u64)> {
     let mut pts = Vec::new();
@@ -223,41 +254,57 @@ fn affine_add(p: (u64, u64), q: (u64, u64)) -> (u64, u64) {
     (x3, y3)
 }
 
+/// Point addition on y^2 = x^3 + 7 over F_251, for both addend interfaces and
+/// both lowerings. A quantum addend must come back unchanged.
 #[test]
 fn point_add_small_curve() {
     let f = f8();
     let pts = curve_points();
-    let mut rng = Rng(9);
-    let mut b = Builder::new();
-    let x = b.alloc_n(8);
-    let y = b.alloc_n(8);
-    let cx: Vec<BitId> = (0..8).map(BitId).collect();
-    let cy: Vec<BitId> = (8..16).map(BitId).collect();
-    point_add(&f, &mut b, &x, &y, &cx, &cy);
-    let mut tv = Vec::new();
-    let mut ov = Vec::new();
-    while tv.len() < 64 {
-        let t = pts[rng.below(pts.len() as u64) as usize];
-        let o = pts[rng.below(pts.len() as u64) as usize];
-        if t.0 == o.0 || affine_add(t, o).0 == o.0 {
-            continue;
+    for quantum in [false, true] {
+        for coherent in [false, true] {
+            COHERENT.with(|c| c.set(coherent));
+            let mut rng = Rng(9);
+            let mut b = Builder::new();
+            let x = b.alloc_n(8);
+            let y = b.alloc_n(8);
+            let (cx, cy, ax_reg, ay_reg) = if quantum {
+                let (ax, ay) = (b.alloc_n(8), b.alloc_n(8));
+                (Coord::Qubits(ax.clone()), Coord::Qubits(ay.clone()), qreg(&ax), qreg(&ay))
+            } else {
+                let ax: Vec<BitId> = (0..8).map(BitId).collect();
+                let ay: Vec<BitId> = (8..16).map(BitId).collect();
+                (Coord::Bits(ax.clone()), Coord::Bits(ay.clone()), breg(&ax), breg(&ay))
+            };
+            point_add(&f, &mut b, &x, &y, &cx, &cy);
+            let mut tv = Vec::new();
+            let mut ov = Vec::new();
+            while tv.len() < 64 {
+                let t = pts[rng.below(pts.len() as u64) as usize];
+                let o = pts[rng.below(pts.len() as u64) as usize];
+                if t.0 == o.0 || affine_add(t, o).0 == o.0 {
+                    continue;
+                }
+                tv.push(t);
+                ov.push(o);
+            }
+            let out = run(
+                &b,
+                &[
+                    (qreg(&x), tv.iter().map(|p| p.0).collect()),
+                    (qreg(&y), tv.iter().map(|p| p.1).collect()),
+                    (ax_reg.clone(), ov.iter().map(|p| p.0).collect()),
+                    (ay_reg.clone(), ov.iter().map(|p| p.1).collect()),
+                ],
+                &[qreg(&x), qreg(&y), ax_reg, ay_reg],
+            );
+            for i in 0..64 {
+                let tag = format!("{:?} + {:?}, quantum={quantum}, coherent={coherent}", tv[i], ov[i]);
+                assert_eq!((out[0][i], out[1][i]), affine_add(tv[i], ov[i]), "{tag}");
+                assert_eq!((out[2][i], out[3][i]), ov[i], "addend restored, {tag}");
+            }
         }
-        tv.push(t);
-        ov.push(o);
     }
-    let out = run(
-        &b,
-        &[
-            (qreg(&x), tv.iter().map(|p| p.0).collect()),
-            (qreg(&y), tv.iter().map(|p| p.1).collect()),
-            (breg(&cx), ov.iter().map(|p| p.0).collect()),
-            (breg(&cy), ov.iter().map(|p| p.1).collect()),
-        ],
-        &[qreg(&x), qreg(&y)],
-    );
-    for i in 0..64 {
-        assert_eq!((out[0][i], out[1][i]), affine_add(tv[i], ov[i]), "{:?} + {:?}", tv[i], ov[i]);
-    }
+    COHERENT.with(|c| c.set(false));
 }
 
 /// Prints the Toffoli cost of each component at n = 256 (`--ignored --nocapture`).

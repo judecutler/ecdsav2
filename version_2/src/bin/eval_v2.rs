@@ -118,60 +118,107 @@ fn mul(c: &WeierstrassEllipticCurve, k: U256) -> Pt {
     c.mul(c.gx, c.gy, k)
 }
 
+/// Per-shot failure classes from C-AMP: W wrong output (or addend not
+/// restored), A dirty ancilla, P phase only. A shot counts in the first class
+/// that applies, in that order. `reversed` counts shots whose forward∘reverse
+/// run did not return to the input state (measurement-free circuits only).
 #[derive(Default, Clone, Copy)]
 struct Tally {
     shots: usize,
     lanes: usize,
     wrong: usize,
     wrong_minus_2o: usize,
-    phase_batches: usize,
-    ancilla_batches: usize,
+    dirty: usize,
+    phase_only: usize,
+    reversed_bad: usize,
     toffoli: u64,
 }
 
-fn run(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], seed: &[u8]) -> Tally {
+impl Tally {
+    fn add(self, b: Tally) -> Tally {
+        Tally {
+            shots: self.shots + b.shots,
+            lanes: self.lanes + b.lanes,
+            wrong: self.wrong + b.wrong,
+            wrong_minus_2o: self.wrong_minus_2o + b.wrong_minus_2o,
+            dirty: self.dirty + b.dirty,
+            phase_only: self.phase_only + b.phase_only,
+            reversed_bad: self.reversed_bad + b.reversed_bad,
+            toffoli: self.toffoli + b.toffoli,
+        }
+    }
+}
+
+fn run(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], seed: &[u8], reverse: bool) -> Tally {
     let mut h = Shake256::default();
     h.update(b"qcb-v2-proxy-sim");
     h.update(seed);
     let mut xof = h.finalize_xof();
     let mut sim = Simulator::new(nq as usize, nb as usize, &mut xof);
+    let quantum_addend = matches!(regs[2][0], QubitOrBit::Qubit(_));
+    let reg_qubits: std::collections::HashSet<u64> = regs
+        .iter()
+        .flatten()
+        .filter_map(|m| if let QubitOrBit::Qubit(q) = m { Some(q.0) } else { None })
+        .collect();
     let mut t = Tally::default();
     for chunk in cases.chunks(64) {
         let bs = chunk.len();
-        let mask = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
         sim.clear_for_shot();
         // Idle lanes rerun the first case so the Toffoli tally stays per shot.
-        for s in 0..64 {
-            let c = &chunk[if s < bs { s } else { 0 }];
-            sim.set_register(&regs[0], c.t.0, s);
-            sim.set_register(&regs[1], c.t.1, s);
-            sim.set_register(&regs[2], c.o.0, s);
-            sim.set_register(&regs[3], c.o.1, s);
-        }
+        let case = |s: usize| &chunk[if s < bs { s } else { 0 }];
+        let load = |sim: &mut Simulator<_>| {
+            for s in 0..64 {
+                let c = case(s);
+                sim.set_register(&regs[0], c.t.0, s);
+                sim.set_register(&regs[1], c.t.1, s);
+                sim.set_register(&regs[2], c.o.0, s);
+                sim.set_register(&regs[3], c.o.1, s);
+            }
+        };
+        load(&mut sim);
         let before = sim.stats.toffoli_gates;
         sim.apply_iter(ops.iter());
         t.toffoli += sim.stats.toffoli_gates - before;
+        let mut dirty_lanes = 0u64;
+        for q in 0..nq {
+            if !reg_qubits.contains(&q) {
+                dirty_lanes |= sim.qubit(QubitId(q));
+            }
+        }
         for (s, c) in chunk.iter().enumerate() {
-            let got = (sim.get_register(&regs[0], s), sim.get_register(&regs[1], s));
-            if got != c.want {
+            let mut ok = (sim.get_register(&regs[0], s), sim.get_register(&regs[1], s)) == c.want;
+            if quantum_addend {
+                ok &= (sim.get_register(&regs[2], s), sim.get_register(&regs[3], s)) == c.o;
+            }
+            if !ok {
                 t.wrong += 1;
                 if c.t_is_minus_2o {
                     t.wrong_minus_2o += 1;
                 }
+            } else if (dirty_lanes >> s) & 1 == 1 {
+                t.dirty += 1;
+            } else if (sim.phase >> s) & 1 == 1 {
+                t.phase_only += 1;
             }
         }
-        if sim.phase & mask != 0 {
-            t.phase_batches += 1;
-        }
-        for r in &regs[..2] {
-            for m in r {
-                if let QubitOrBit::Qubit(q) = *m {
-                    *sim.qubit_mut(q) = 0;
-                }
+        if reverse {
+            let rev: Vec<Op> = ops.iter().rev().copied().collect();
+            sim.apply_iter(rev.iter());
+            let mut zeros = DummyXof;
+            let mut start = Simulator::new(nq as usize, nb as usize, &mut zeros);
+            for s in 0..64 {
+                let c = case(s);
+                start.set_register(&regs[0], c.t.0, s);
+                start.set_register(&regs[1], c.t.1, s);
+                start.set_register(&regs[2], c.o.0, s);
+                start.set_register(&regs[3], c.o.1, s);
             }
-        }
-        if (0..nq).any(|q| sim.qubit(QubitId(q)) & mask != 0) {
-            t.ancilla_batches += 1;
+            let mut bad = sim.phase;
+            for q in 0..nq as usize {
+                bad |= sim.qubits[q] ^ start.qubits[q];
+            }
+            t.reversed_bad += (0..bs).filter(|&s| (bad >> s) & 1 == 1).count();
         }
         t.shots += bs;
         t.lanes += 64;
@@ -179,7 +226,14 @@ fn run(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], s
     t
 }
 
-fn run_parallel(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], threads: usize, seed: &[u8]) -> Tally {
+struct DummyXof;
+impl XofReader for DummyXof {
+    fn read(&mut self, buf: &mut [u8]) {
+        buf.fill(0);
+    }
+}
+
+fn run_parallel(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], threads: usize, seed: &[u8], reverse: bool) -> Tally {
     let per = cases.len().div_ceil(threads).div_ceil(64) * 64;
     let parts: Vec<Tally> = std::thread::scope(|s| {
         let hs: Vec<_> = cases
@@ -188,20 +242,42 @@ fn run_parallel(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &
             .map(|(i, ch)| {
                 let mut sd = seed.to_vec();
                 sd.push(i as u8);
-                s.spawn(move || run(ops, regs, nq, nb, ch, &sd))
+                s.spawn(move || run(ops, regs, nq, nb, ch, &sd, reverse))
             })
             .collect();
         hs.into_iter().map(|h| h.join().unwrap()).collect()
     });
-    parts.iter().fold(Tally::default(), |a, b| Tally {
-        shots: a.shots + b.shots,
-        lanes: a.lanes + b.lanes,
-        wrong: a.wrong + b.wrong,
-        wrong_minus_2o: a.wrong_minus_2o + b.wrong_minus_2o,
-        phase_batches: a.phase_batches + b.phase_batches,
-        ancilla_batches: a.ancilla_batches + b.ancilla_batches,
-        toffoli: a.toffoli + b.toffoli,
-    })
+    parts.into_iter().fold(Tally::default(), Tally::add)
+}
+
+/// One-sided 95% Clopper–Pearson upper bound on a rate, from f failures in n.
+fn cp_upper(f: usize, n: usize) -> f64 {
+    if n == 0 {
+        return 1.0;
+    }
+    // P[X <= f] for X ~ Bin(n, p), summed in log space.
+    let cdf = |p: f64| -> f64 {
+        let (lp, lq) = (p.ln(), (1.0 - p).ln());
+        let mut log_c = 0.0f64;
+        let mut acc = 0.0;
+        for k in 0..=f {
+            if k > 0 {
+                log_c += ((n - k + 1) as f64).ln() - (k as f64).ln();
+            }
+            acc += (log_c + k as f64 * lp + (n - k) as f64 * lq).exp();
+        }
+        acc
+    };
+    let (mut lo, mut hi) = (f as f64 / n as f64, 1.0);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if cdf(mid) > 0.05 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    hi
 }
 
 struct Census {
@@ -258,6 +334,7 @@ fn main() {
     let seed = arg("--seed", "qcb-v2-proxy-2026-10-31");
     let threads: usize = arg("--threads", "2").parse().unwrap();
     let json_path = arg("--json", "");
+    let k_runs: f64 = arg("--k", "28").parse().unwrap();
 
     let c = curve(&curve_name);
     assert!(c.is_on_curve(c.gx, c.gy), "generator not on curve");
@@ -265,6 +342,8 @@ fn main() {
     let (nq, nb, _, regs) = analyze_ops(ops.iter());
     assert_eq!(regs.len(), 4, "expected 4 registers");
     let cen = census(&ops, &regs);
+    let measurement_free = !ops.iter().any(|o| matches!(o.kind, OperationType::Hmr | OperationType::R));
+    let quantum_addend = matches!(regs[2][0], QubitOrBit::Qubit(_));
 
     // Case classes.
     let mut h = Shake256::default();
@@ -318,47 +397,58 @@ fn main() {
     println!("  conditioned    : {}", cen.conditioned_toffoli_ops);
     println!("conditioned ops  : {} ({} on offset bits)", cen.conditioned_ops, cen.offset_conditioned_ops);
     println!("bit-logic ops    : {}", cen.bit_logic_ops);
+    println!("addend           : {}", if quantum_addend { "qubit registers (Track Q)" } else { "classical bits" });
+    println!("measurements     : {}", if measurement_free { "none (forward∘reverse checked)" } else { "HMR/R present (no reverse check)" });
 
     let classes: [(&str, &Vec<Case>); 4] =
         [("random", &random), ("small-multiples", &small), ("near-order", &near_order), ("exceptional T=-2O", &exceptional)];
     let mut rows = Vec::new();
     let mut random_tally = Tally::default();
     for (name, cases) in classes {
-        let t = run_parallel(&ops, &regs, nq, nb, cases, threads, seed.as_bytes());
+        let t = run_parallel(&ops, &regs, nq, nb, cases, threads, seed.as_bytes(), measurement_free);
         println!(
-            "{name:<18}: {:>6} shots, {:>6} wrong ({} with T = -2O), {} phase-dirty batches, {} ancilla-dirty batches, avg Toffoli {:.1}",
+            "{name:<18}: {:>6} shots | W {:>4} ({} with T = -2O) | A {:>3} | P {:>3} | reverse-bad {:>3} | avg Toffoli {:.1}",
             t.shots,
             t.wrong,
             t.wrong_minus_2o,
-            t.phase_batches,
-            t.ancilla_batches,
+            t.dirty,
+            t.phase_only,
+            t.reversed_bad,
             t.toffoli as f64 / t.lanes.max(1) as f64
         );
         if name == "random" {
             random_tally = t;
         }
         rows.push(format!(
-            "{{\"class\":\"{name}\",\"shots\":{},\"wrong\":{},\"wrong_t_minus_2o\":{},\"phase_dirty_batches\":{},\"ancilla_dirty_batches\":{}}}",
-            t.shots, t.wrong, t.wrong_minus_2o, t.phase_batches, t.ancilla_batches
+            "{{\"class\":\"{name}\",\"shots\":{},\"wrong\":{},\"wrong_t_minus_2o\":{},\"dirty_ancilla\":{},\"phase_only\":{},\"reverse_bad\":{}}}",
+            t.shots, t.wrong, t.wrong_minus_2o, t.dirty, t.phase_only, t.reversed_bad
         ));
     }
     let avg = random_tally.toffoli as f64 / random_tally.lanes as f64;
-    let clean = random_tally.phase_batches == 0 && random_tally.ancilla_batches == 0;
-    let p_hat = if clean { 1.0 - random_tally.wrong as f64 / random_tally.shots as f64 } else { 0.0 };
+    let n = random_tally.shots;
+    let eps_wa = cp_upper(random_tally.wrong + random_tally.dirty, n);
+    let eps_p = cp_upper(random_tally.phase_only, n);
+    // C-AMP amplitude pricing over k additions per Shor run (k = 28 default).
+    let p_run = ((1.0 - eps_wa).powf(2.0 * k_runs) * (1.0 - 2.0 * eps_p).powf(2.0 * k_runs)).max(1e-300);
+    let gate_ok = eps_wa + 2.0 * eps_p <= 1.0 - 0.9f64.powf(1.0 / (2.0 * k_runs));
     let qxt_avg = nq as f64 * avg;
     let qxt_worst = nq as f64 * cen.toffoli_ops as f64;
     println!("Q x T (v1 avg)   : {:.4e}", qxt_avg);
     println!("Q x T (worst)    : {:.4e}", qxt_worst);
-    println!("p-hat (random)   : {:.6}", p_hat);
-    println!("Q x T_worst / p  : {:.4e}", if p_hat > 0.0 { qxt_worst / p_hat } else { f64::INFINITY });
+    println!(
+        "random-class 95% UB : eps_W+A {:.3e}, eps_P {:.3e} (from {} shots, {} W/A, {} P)",
+        eps_wa, eps_p, n, random_tally.wrong + random_tally.dirty, random_tally.phase_only
+    );
+    println!("C-AMP P_run (k={k_runs}) : {:.4}  -> priced Q x T_worst {:.4e}; 90% gate {}", p_run, qxt_worst / p_run, if gate_ok { "PASS" } else { "FAIL" });
     if !json_path.is_empty() {
         let body = format!(
-            "{{\"curve\":\"{curve_name}\",\"seed\":\"{seed}\",\"qubits\":{nq},\"ops\":{},\"toffoli_worst\":{},\"toffoli_avg\":{avg:.3},\"conditioned_toffoli_ops\":{},\"offset_conditioned_ops\":{},\"bit_logic_ops\":{},\"p_hat\":{p_hat},\"qxt_avg\":{qxt_avg:.0},\"qxt_worst\":{qxt_worst:.0},\"classes\":[{}]}}\n",
+            "{{\"curve\":\"{curve_name}\",\"seed\":\"{seed}\",\"quantum_addend\":{quantum_addend},\"measurement_free\":{measurement_free},\"qubits\":{nq},\"ops\":{},\"toffoli_worst\":{},\"toffoli_avg\":{avg:.3},\"conditioned_toffoli_ops\":{},\"offset_conditioned_ops\":{},\"bit_logic_ops\":{},\"eps_wa_ub\":{eps_wa},\"eps_p_ub\":{eps_p},\"p_run\":{p_run},\"gate_90\":{gate_ok},\"qxt_avg\":{qxt_avg:.0},\"qxt_worst\":{qxt_worst:.0},\"qxt_priced\":{:.0},\"classes\":[{}]}}\n",
             ops.len(),
             cen.toffoli_ops,
             cen.conditioned_toffoli_ops,
             cen.offset_conditioned_ops,
             cen.bit_logic_ops,
+            qxt_worst / p_run,
             rows.join(",")
         );
         std::fs::write(&json_path, body).unwrap();

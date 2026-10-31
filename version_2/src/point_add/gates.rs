@@ -55,6 +55,29 @@ impl Builder {
         QubitId(self.next - 1)
     }
 
+    /// Like `alloc_n`, but never returns any of `avoid`.
+    pub fn alloc_n_avoiding(&mut self, n: usize, avoid: &[Q]) -> Vec<Q> {
+        let avoid: BTreeSet<u64> = avoid.iter().map(|q| q.0).collect();
+        let mut out = Vec::with_capacity(n);
+        while out.len() < n {
+            let pick = self.free.iter().copied().find(|q| !avoid.contains(q));
+            let q = match pick {
+                Some(q) => {
+                    self.free.remove(&q);
+                    q
+                }
+                None => {
+                    self.next += 1;
+                    self.next - 1
+                }
+            };
+            self.live += 1;
+            self.peak_live = self.peak_live.max(self.live);
+            out.push(QubitId(q));
+        }
+        out
+    }
+
     pub fn alloc_n(&mut self, n: usize) -> Vec<Q> {
         (0..n).map(|_| self.alloc()).collect()
     }
@@ -137,8 +160,9 @@ fn op(kind: OperationType) -> Op {
 }
 
 /// Lowers logical gates to harness ops. `scratch` is the classical bit that
-/// receives X-basis measurement outcomes for `Unand`.
-pub fn lower(gates: &[G], scratch: BitId, out: &mut Vec<Op>) {
+/// receives X-basis measurement outcomes for `Unand`. With `coherent`, no
+/// measurement is emitted: `Unand` becomes a Toffoli.
+pub fn lower(gates: &[G], scratch: BitId, coherent: bool, out: &mut Vec<Op>) {
     out.reserve(gates.len() + gates.len() / 8);
     for &g in gates {
         match g {
@@ -160,6 +184,13 @@ pub fn lower(gates: &[G], scratch: BitId, out: &mut Vec<Op>) {
                 out.push(o);
             }
             G::Ccx(a, b, t) | G::And(a, b, t) => {
+                let mut o = op(OperationType::CCX);
+                o.q_control2 = a;
+                o.q_control1 = b;
+                o.q_target = t;
+                out.push(o);
+            }
+            G::Unand(a, b, t) if coherent => {
                 let mut o = op(OperationType::CCX);
                 o.q_control2 = a;
                 o.q_control1 = b;

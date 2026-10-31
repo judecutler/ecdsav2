@@ -1,9 +1,10 @@
-//! Affine point addition (x, y) += (cx, cy) with a classical addend.
+//! Affine point addition (x, y) += (cx, cy), with the addend either classical
+//! bits (the v1 harness) or qubit registers (Track Q).
 //!
-//! The addend bits are only ever copied into |0⟩ qubits with classically
-//! conditioned X gates and copied out again. That is the interface a windowed
-//! Shor lookup provides, so no Toffoli here depends on the addend being
-//! classical, and no classical computation is done on it.
+//! The addend is only ever read. Classical bits are copied into |0⟩ qubits
+//! with conditioned X gates and copied out again; qubit registers are used in
+//! place and are unchanged at the end. So no Toffoli depends on the addend
+//! being classical, and no classical computation is done on it.
 //!
 //!   x -= cx; y -= cy                     (dx, dy)
 //!   (a, y) = (0, dy) -> (dy/dx, 0)       lambda
@@ -18,19 +19,48 @@ use super::divide::divide;
 use super::gates::{Builder, Q};
 use crate::circuit::BitId;
 
-fn load_bits(b: &mut Builder, bits: &[BitId]) -> Vec<Q> {
-    let r = b.alloc_n(bits.len());
-    for (&q, &c) in r.iter().zip(bits) {
-        b.x_if_bit(q, c);
-    }
-    r
+/// One addend coordinate.
+#[derive(Clone)]
+pub enum Coord {
+    Bits(Vec<BitId>),
+    Qubits(Vec<Q>),
 }
 
-fn unload_bits(b: &mut Builder, r: Vec<Q>, bits: &[BitId]) {
-    for (&q, &c) in r.iter().zip(bits) {
-        b.x_if_bit(q, c);
+impl Coord {
+    /// XORs the coordinate into `r`.
+    fn xor_into(&self, b: &mut Builder, r: &[Q]) {
+        match self {
+            Coord::Bits(bits) => r.iter().zip(bits).for_each(|(&q, &c)| b.x_if_bit(q, c)),
+            Coord::Qubits(qs) => r.iter().zip(qs).for_each(|(&q, &a)| b.cx(a, q)),
+        }
     }
-    b.free_n(&r);
+
+    /// A readable register holding the coordinate: the qubits themselves, or
+    /// a fresh copy of the bits.
+    fn load(&self, b: &mut Builder) -> Vec<Q> {
+        match self {
+            Coord::Qubits(qs) => qs.clone(),
+            Coord::Bits(bits) => {
+                let r = b.alloc_n(bits.len());
+                self.xor_into(b, &r);
+                r
+            }
+        }
+    }
+
+    fn unload(&self, b: &mut Builder, r: Vec<Q>) {
+        if let Coord::Bits(_) = self {
+            self.xor_into(b, &r);
+            b.free_n(&r);
+        }
+    }
+
+    /// A fresh register holding a copy of the coordinate.
+    fn copy(&self, b: &mut Builder, n: usize) -> Vec<Q> {
+        let r = b.alloc_n(n);
+        self.xor_into(b, &r);
+        r
+    }
 }
 
 /// Moves the value held on `cur` onto the qubits `target` (all other qubits
@@ -51,24 +81,24 @@ fn route(b: &mut Builder, cur: &mut [Q], target: &[Q]) {
     }
 }
 
-pub fn point_add(f: &Field, b: &mut Builder, x: &[Q], y: &[Q], cx: &[BitId], cy: &[BitId]) {
+pub fn point_add(f: &Field, b: &mut Builder, x: &[Q], y: &[Q], cx: &Coord, cy: &Coord) {
 
-    let c = load_bits(b, cx);
+    let c = cx.load(b);
     f.sub(b, &c, x);
-    unload_bits(b, c, cx);
-    let c = load_bits(b, cy);
+    cx.unload(b, c);
+    let c = cy.load(b);
     f.sub(b, &c, y);
-    unload_bits(b, c, cy);
+    cy.unload(b, c);
 
     let start = b.mark();
     let a = divide(f, b, x, y.to_vec());
     let end = b.mark();
 
-    let c = load_bits(b, cx);
+    let c = cx.load(b);
     for _ in 0..3 {
         f.add(b, &c, x);
     }
-    unload_bits(b, c, cx);
+    cx.unload(b, c);
     f.sub_square(b, &a, x);
 
     // Inverse division: same gates backwards, now with x = cx - x3 as divisor.
@@ -79,17 +109,15 @@ pub fn point_add(f: &Field, b: &mut Builder, x: &[Q], y: &[Q], cx: &[BitId], cy:
         b.realloc(q);
     }
 
-    let c = load_bits(b, cy);
+    let c = cy.load(b);
     f.sub(b, &c, y);
-    unload_bits(b, c, cy);
+    cy.unload(b, c);
 
     // x3 = cx - x, computed into a fresh register, then x cleared.
-    let mut l = load_bits(b, cx);
+    let mut l = cx.copy(b, f.n);
     f.sub(b, x, &l);
     f.add(b, &l, x);
-    for (&q, &bit) in x.iter().zip(cx) {
-        b.x_if_bit(q, bit);
-    }
+    cx.xor_into(b, x);
     let l_orig = l.clone();
     route(b, &mut l, x);
     b.free_n(&l_orig);

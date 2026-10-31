@@ -18,6 +18,8 @@
 
 use super::arith::{cswap, ctl_sub, less_than, load_const, unload_const, Field};
 use super::gates::{Builder, Q};
+use super::transcript::{code_bits, pack, unpack, GROUP};
+use crate::circuit::QubitId;
 
 pub fn steps(f: &Field) -> usize {
     2 * f.n
@@ -47,45 +49,90 @@ fn target_step(f: &Field, b: &mut Builder, alpha: &mut Vec<Q>, beta: &mut Vec<Q>
 /// Consumes beta = y and returns a fresh register holding y/x, with x
 /// unchanged at the end. Requires x != 0 mod p. beta ends at |0⟩ and is freed.
 ///
-/// The GCD runs in place on x, which the target pass does not read. It
-/// provably ends at (u, v) = (1, 0), so u and x are released during the target
-/// pass and rebuilt by the reverse GCD, and alpha is only allocated once the
-/// forward GCD's scratch is free.
+/// The GCD runs in place on x, which the target pass does not read. Qubits
+/// are live only while they can hold data: each step's two transcript bits
+/// are packed into a shared code as they are written (see `transcript.rs`) and
+/// the codes are freed when the reverse GCD clears them, and
+/// u/v bits above the proven width are released. At the end of the forward
+/// GCD only u = 1 remains, so the target pass runs beside the transcript alone.
 pub fn divide(f: &Field, b: &mut Builder, x: &[Q], beta: Vec<Q>) -> Vec<Q> {
     let mut beta = beta;
     let n = f.n;
+    let k_max = steps(f);
     let u = load_const(b, f.p, n);
-    let k = steps(f);
-    let transcript = b.alloc_n(2 * k);
-    let gcd = |b: &mut Builder| {
-        let mut v = x.to_vec();
-        for i in 0..k {
-            gcd_step(b, &u, &mut v, transcript[2 * i], transcript[2 * i + 1], width(f, i));
-        }
-        v
+    // Label vector of v before each step: halving rotates the labels.
+    let mut vs = vec![x.to_vec()];
+    for _ in 0..k_max {
+        let mut v = vs.last().unwrap().clone();
+        v.rotate_left(1);
+        vs.push(v);
+    }
+    // Ids of u and v that can be nonzero before step k (after the last step,
+    // u = 1 and v = 0).
+    let window = |k: usize| -> std::collections::BTreeSet<u64> {
+        let (wu, wv) = if k < k_max { (width(f, k), width(f, k)) } else { (1, 0) };
+        u[..wu].iter().chain(&vs[k][..wv]).map(|q| q.0).collect()
     };
-    let v = gcd(b);
-    // alpha takes the forward GCD's freed scratch; u and v are freed after it
-    // so the target pass's scratch can use them.
-    let mut alpha = b.alloc_n(n);
+
+    let groups: Vec<(usize, usize)> =
+        (0..k_max).step_by(GROUP).map(|s| (s, GROUP.min(k_max - s))).collect();
+    let mut codes = Vec::with_capacity(groups.len());
+    for &(s, m) in &groups {
+        let code = b.alloc_n(code_bits(m));
+        for j in 0..m {
+            let k = s + j;
+            let (odd, swap) = (b.alloc(), b.alloc());
+            let mut v = vs[k].clone();
+            gcd_step(b, &u, &mut v, odd, swap, width(f, k));
+            pack(b, &code, j, odd, swap);
+            b.free(odd);
+            b.free(swap);
+            for id in window(k).difference(&window(k + 1)) {
+                b.free(QubitId(*id));
+            }
+        }
+        codes.push(code);
+    }
+    // alpha must not sit on u or x, which the reverse GCD rebuilds.
+    let avoid: Vec<Q> = u.iter().chain(x).copied().collect();
+    let mut alpha = b.alloc_n_avoiding(n, &avoid);
     b.x(u[0]);
-    b.free_n(&u);
-    b.free_n(&v);
-    for i in 0..k {
-        target_step(f, b, &mut alpha, &mut beta, transcript[2 * i], transcript[2 * i + 1]);
+    b.free(u[0]);
+    for (&(_, m), code) in groups.iter().zip(&codes) {
+        let bits = b.alloc_n(2 * m);
+        for j in (0..m).rev() {
+            unpack(b, code, j, bits[2 * j], bits[2 * j + 1]);
+        }
+        for j in 0..m {
+            target_step(f, b, &mut alpha, &mut beta, bits[2 * j], bits[2 * j + 1]);
+        }
+        for j in 0..m {
+            pack(b, code, j, bits[2 * j], bits[2 * j + 1]);
+        }
+        b.free_n(&bits);
     }
     // beta is 0 now; halving may have moved it onto u's or x's qubits.
     b.free_n(&beta);
 
-    for &q in u.iter().chain(&v) {
-        b.realloc(q);
-    }
+    b.realloc(u[0]);
     b.x(u[0]);
-    // Regenerated rather than replayed, so its scratch avoids alpha.
-    b.inverse_of(|b| {
-        gcd(b);
-    });
-    b.free_n(&transcript);
+    for (&(s, m), code) in groups.iter().zip(&codes).rev() {
+        for j in (0..m).rev() {
+            let k = s + j;
+            for id in window(k).difference(&window(k + 1)) {
+                b.realloc(QubitId(*id));
+            }
+            b.inverse_of(|b| {
+                let (odd, swap) = (b.alloc(), b.alloc());
+                let mut v = vs[k].clone();
+                gcd_step(b, &u, &mut v, odd, swap, width(f, k));
+                pack(b, code, j, odd, swap);
+                b.free(odd);
+                b.free(swap);
+            });
+        }
+        b.free_n(code);
+    }
     unload_const(b, u, f.p);
     alpha
 }
