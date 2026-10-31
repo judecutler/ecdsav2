@@ -52,7 +52,6 @@ fn route(b: &mut Builder, cur: &mut [Q], target: &[Q]) {
 }
 
 pub fn point_add(f: &Field, b: &mut Builder, x: &[Q], y: &[Q], cx: &[BitId], cy: &[BitId]) {
-    let n = f.n;
 
     let c = load_bits(b, cx);
     f.sub(b, &c, x);
@@ -61,13 +60,9 @@ pub fn point_add(f: &Field, b: &mut Builder, x: &[Q], y: &[Q], cx: &[BitId], cy:
     f.sub(b, &c, y);
     unload_bits(b, c, cy);
 
-    let mut a = b.alloc_n(n);
-    let mut yy = y.to_vec();
-    let (a_in, y_in) = (a.clone(), yy.clone());
     let start = b.mark();
-    divide(f, b, x, &mut a, &mut yy);
+    let a = divide(f, b, x, y.to_vec());
     let end = b.mark();
-    b.free_n(&yy);
 
     let c = load_bits(b, cx);
     for _ in 0..3 {
@@ -77,17 +72,12 @@ pub fn point_add(f: &Field, b: &mut Builder, x: &[Q], y: &[Q], cx: &[BitId], cy:
     f.sub_square(b, &a, x);
 
     // Inverse division: same gates backwards, now with x = cx - x3 as divisor.
-    // It maps (a, yy) = (lambda, 0) back onto the input labels (a_in, y_in).
-    for &q in &yy {
-        b.realloc(q);
-    }
+    // It takes a = lambda back to y = lambda·x and clears a.
     b.replay_inverse(start, end);
     b.free_n(&a);
-    b.free_n(&yy);
-    for &q in a_in.iter().chain(&y_in) {
+    for &q in y {
         b.realloc(q);
     }
-    b.free_n(&a_in);
 
     let c = load_bits(b, cy);
     f.sub(b, &c, y);

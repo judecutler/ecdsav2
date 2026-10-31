@@ -186,21 +186,19 @@ fn divide_every_divisor() {
     for chunk in 0..4 {
         let mut b = Builder::new();
         let x = b.alloc_n(8);
-        let mut a = b.alloc_n(8);
-        let mut y = b.alloc_n(8);
-        let (x_in, a_in, y_in) = (x.clone(), a.clone(), y.clone());
-        divide(&f, &mut b, &x, &mut a, &mut y);
+        let y = b.alloc_n(8);
+        let (x_in, y_in) = (x.clone(), y.clone());
+        let a = divide(&f, &mut b, &x, y);
         let xv: Vec<u64> = (0..64).map(|i| 1 + ((chunk * 64 + i) % (P8 - 1))).collect();
         let yv = samples(&mut rng, P8);
         let out = run(
             &b,
-            &[(qreg(&x_in), xv.clone()), (qreg(&a_in), vec![0; 64]), (qreg(&y_in), yv.clone())],
-            &[qreg(&x), qreg(&a), qreg(&y)],
+            &[(qreg(&x_in), xv.clone()), (qreg(&y_in), yv.clone())],
+            &[qreg(&x), qreg(&a)],
         );
         for i in 0..64 {
             assert_eq!(out[0][i], xv[i]);
             assert_eq!(out[1][i], yv[i] * pow(xv[i], P8 - 2, P8) % P8, "y/x for x={}", xv[i]);
-            assert_eq!(out[2][i], 0);
         }
     }
 }
