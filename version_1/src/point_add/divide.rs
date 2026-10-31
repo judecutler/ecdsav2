@@ -37,7 +37,7 @@ fn target_step(f: &Field, b: &mut Builder, alpha: &mut Vec<Q>, beta: &mut Vec<Q>
 /// Requires x != 0 mod p. Relabels alpha and beta.
 pub fn divide(f: &Field, b: &mut Builder, x: &[Q], alpha: &mut Vec<Q>, beta: &mut Vec<Q>) {
     let n = f.n;
-    let u = load_const(b, f.p, n, None);
+    let u = load_const(b, f.p, n);
     let v0 = b.alloc_n(n);
     for (&s, &d) in x.iter().zip(&v0) {
         b.cx(s, d);
@@ -59,5 +59,5 @@ pub fn divide(f: &Field, b: &mut Builder, x: &[Q], alpha: &mut Vec<Q>, beta: &mu
         b.cx(s, d);
     }
     b.free_n(&v0);
-    unload_const(b, u, f.p, None);
+    unload_const(b, u, f.p);
 }

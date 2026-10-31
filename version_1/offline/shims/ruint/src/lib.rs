@@ -13,6 +13,7 @@ pub struct U256([u64; 4]);
 
 impl U256 {
     pub const ZERO: U256 = U256([0; 4]);
+    pub const MAX: U256 = U256([u64::MAX; 4]);
 
     pub const fn from_limbs(l: [u64; 4]) -> Self {
         U256(l)

@@ -14,6 +14,11 @@ path = "src/bin/build_circuit.rs"
 name = "eval_circuit"
 path = "src/bin/eval_circuit.rs"
 
+# QCB addition: v2-proxy evaluator (not part of the upstream contract).
+[[bin]]
+name = "eval_v2"
+path = "src/bin/eval_v2.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

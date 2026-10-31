@@ -86,8 +86,8 @@ fn integer_add_sub_compare() {
     let u = b.alloc_n(8);
     let z = b.alloc();
     let w = b.alloc();
-    arith::add(&mut b, &a, &t, Some(z));
-    arith::sub(&mut b, &a, &u, None);
+    arith::add(&mut b, &arith::qs(&a), &t, Some(z));
+    arith::sub(&mut b, &arith::qs(&a), &u, None);
     arith::less_than(&mut b, &a, &u, w, None);
     let (av, tv, uv) = (samples(&mut rng, 256), samples(&mut rng, 256), samples(&mut rng, 256));
     let out = run(

@@ -61,7 +61,8 @@ pub fn build_for(f: &Field) -> Vec<Op> {
     declare(&mut ops, 2, cx.iter().map(|&c| QubitOrBit::Bit(c)));
     declare(&mut ops, 3, cy.iter().map(|&c| QubitOrBit::Bit(c)));
     lower(&b.gates, scratch, &mut ops);
-    eprintln!("  builder     : width {} qubits, peak live {}", b.width(), b.peak_live);
+    let toffolis = b.gates.iter().filter(|g| matches!(g, gates::G::And(..) | gates::G::Ccx(..))).count();
+    eprintln!("  builder     : width {} qubits, {} Toffolis", b.width(), toffolis);
     ops
 }
 

@@ -30,16 +30,18 @@ Division D runs a binary GCD on `(u, v) = (p, x)` with three cases (v even: halv
 | 1. Scaffold + harness copy | done |
 | 2. Arithmetic primitives + tests | done (n=8, p=251 tests pass) |
 | 3. Exact divider | done (every divisor mod 251 passes) |
-| 4. Point addition + v1 score | small-curve test passes; full 256-bit build next |
-| 5. v2-proxy evaluator | pending |
+| 4. Point addition + v1 score | v1a scored 1.47e10 (all 9,024 shots OK); v1b (2,817 q) scoring |
+| 5. v2-proxy evaluator | written (`src/bin/eval_v2.rs`); first run on v1b in progress |
 | 6. Reflection | pending |
 
 ## Next step
 
-Build the full secp256k1 circuit and score it with the unchanged eval_circuit (offline twin): `cd version_1/offline && RUSTUP_TOOLCHAIN=stable cargo run --release --offline --bin build_circuit && cargo run --release --offline --bin eval_circuit`.
+Read `version_1/offline/run2/eval_log.txt` for the v1 and v2-proxy scores of v1b, then run the P-256 genericity check (`V1_CURVE=p256` build + `eval_v2 --curve p256`), then write the reflection.
 
 ## Log
 
 - 2026-10-31 01:40 PT. Copied the upstream harness from Layr-Labs/ecdsafail-challenge@5ba2d2d (lib.rs, circuit.rs, sim.rs, weierstrass_elliptic_curve.rs, bin/build_circuit.rs, bin/eval_circuit.rs, Cargo files). Those trusted files are unchanged. Everything we write lives in `src/point_add/` and `src/bin/eval_v2.rs`.
 - 2026-10-31 02:10 PT. Sandbox blocks crates.io and static.rust-lang.org (403 from the egress proxy), so the pinned 1.93.0 toolchain and the four registry crates cannot be fetched. Added `offline/`, a twin Cargo package that compiles the same unchanged `../src` against local shims: an exact U256 (ruint/alloy), a real SHAKE256 (checked against the FIPS 202 empty-input vector), and a pass-through stand-in for zstd framing. Scores from the twin match a real build because the Fiat-Shamir seed and simulator do not depend on compression. Teammates with crates.io access can build `version_1/` directly.
 - 2026-10-31 02:20 PT. Wrote `src/point_add/{gates,arith,divide,point,mod,tests}.rs`. Logical gates: AND (1 Toffoli) and UNAND (X-basis measurement + classically controlled CZ, 0 Toffolis) swap under inversion, so any block can be inverted by replay. Tests: integer add/sub/compare, field add/halve/double/controlled-sub, square-subtract, division for all 250 divisors mod 251, and full point addition on y^2 = x^3 + 7 over F_251, all with clean ancillas and zero phase. One failure was a test bug (input labels captured after relabeling), not a circuit bug.
+- 2026-10-31 02:55 PT. **v1a scored.** Full secp256k1 build: 3,074 qubits, 38.5M ops. Unchanged `eval_circuit`: 9,024/9,024 shots correct, 0 phase-garbage, 0 ancilla-garbage batches, avg Toffoli 4,790,008 (constant per shot), **score 14,724,484,592 (1.47e10)**. That is 1.37x the challenge's original 1.07e10 baseline. Exact, but not competitive yet.
+- 2026-10-31 03:05 PT. **v1b.** Replaced loaded constant registers with a unified adder whose addend bits are Zero / One / qubit (a control qubit stands in for every set bit of a controlled constant). Width 3,074 -> 2,817 (-257, as predicted), Toffolis 4,787,186. Builder-predicted Q x T = 1.349e10. All small-field tests still pass.
