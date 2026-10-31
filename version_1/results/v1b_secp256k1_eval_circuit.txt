@@ -1,0 +1,20 @@
+-- correctness tests (9024 shots) --
+  tested shots            : 9024
+  classical mismatches    : 0
+  phase-garbage batches   : 0
+  ancilla-garbage batches : 0
+  all 9024 shots OK
+
+=== circuit metrics (secp256k1, n=256) ===
+  avg executed Toffoli  : 4787186.000
+  avg executed Clifford : 29405045.495
+  total Toffoli (sum)   : 43199566464 over 9024 shots
+  total Clifford (sum)  : 265351130547
+  emitted ops           : 39553294
+  qubits                : 2817
+
+=== experiment OK ===
+
+real	4m59.485s
+user	4m50.230s
+sys	0m1.685s

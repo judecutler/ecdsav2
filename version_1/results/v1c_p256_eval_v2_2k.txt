@@ -1,0 +1,20 @@
+=== eval_v2 (QCB v2 proxy) ===
+curve            : p256
+qubits (width)   : 2559
+ops              : 37808720
+Toffoli ops      : 4787186 (worst case per shot)
+  conditioned    : 0
+conditioned ops  : 4001266 (2560 on offset bits)
+bit-logic ops    : 0
+random            :   2000 shots,      0 wrong (0 with T = -2O), 0 phase-dirty batches, 0 ancilla-dirty batches, avg Toffoli 4787186.0
+small-multiples   :    528 shots,     12 wrong (12 with T = -2O), 5 phase-dirty batches, 8 ancilla-dirty batches, avg Toffoli 4787186.0
+near-order        :     93 shots,      3 wrong (3 with T = -2O), 1 phase-dirty batches, 1 ancilla-dirty batches, avg Toffoli 4787186.0
+exceptional T=-2O :     64 shots,     64 wrong (64 with T = -2O), 1 phase-dirty batches, 1 ancilla-dirty batches, avg Toffoli 4787186.0
+Q x T (v1 avg)   : 1.2250e10
+Q x T (worst)    : 1.2250e10
+p-hat (random)   : 1.000000
+Q x T_worst / p  : 1.2250e10
+
+real	1m2.688s
+user	1m10.235s
+sys	0m1.542s

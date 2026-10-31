@@ -85,3 +85,13 @@ pub fn divide(f: &Field, b: &mut Builder, x: &[Q], beta: Vec<Q>) -> Vec<Q> {
     unload_const(b, u, f.p);
     alpha
 }
+
+#[cfg(test)]
+pub fn gcd_step_for_cost(b: &mut Builder, u: &[Q], v: &mut Vec<Q>, odd: Q, swap: Q) {
+    gcd_step(b, u, v, odd, swap)
+}
+
+#[cfg(test)]
+pub fn target_step_for_cost(f: &Field, b: &mut Builder, a: &mut Vec<Q>, be: &mut Vec<Q>, odd: Q, swap: Q) {
+    target_step(f, b, a, be, odd, swap)
+}

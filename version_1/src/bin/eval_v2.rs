@@ -90,6 +90,8 @@ struct Case {
     t: Pt,
     o: Pt,
     want: Pt,
+    /// T = -2·O, so the sum is -O and x3 equals the addend's x.
+    t_is_minus_2o: bool,
 }
 
 fn neg(c: &WeierstrassEllipticCurve, p: Pt) -> Pt {
@@ -102,7 +104,8 @@ fn case(c: &WeierstrassEllipticCurve, t: Pt, o: Pt) -> Option<Case> {
     if id(t) || id(o) || t.0 == o.0 {
         return None;
     }
-    Some(Case { t, o, want: c.add(t.0, t.1, o.0, o.1) })
+    let want = c.add(t.0, t.1, o.0, o.1);
+    Some(Case { t, o, want, t_is_minus_2o: want == neg(c, o) })
 }
 
 fn scalar(xof: &mut sha3::Shake256Reader) -> U256 {
@@ -118,7 +121,9 @@ fn mul(c: &WeierstrassEllipticCurve, k: U256) -> Pt {
 #[derive(Default, Clone, Copy)]
 struct Tally {
     shots: usize,
+    lanes: usize,
     wrong: usize,
+    wrong_minus_2o: usize,
     phase_batches: usize,
     ancilla_batches: usize,
     toffoli: u64,
@@ -135,7 +140,9 @@ fn run(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], s
         let bs = chunk.len();
         let mask = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
         sim.clear_for_shot();
-        for (s, c) in chunk.iter().enumerate() {
+        // Idle lanes rerun the first case so the Toffoli tally stays per shot.
+        for s in 0..64 {
+            let c = &chunk[if s < bs { s } else { 0 }];
             sim.set_register(&regs[0], c.t.0, s);
             sim.set_register(&regs[1], c.t.1, s);
             sim.set_register(&regs[2], c.o.0, s);
@@ -148,6 +155,9 @@ fn run(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], s
             let got = (sim.get_register(&regs[0], s), sim.get_register(&regs[1], s));
             if got != c.want {
                 t.wrong += 1;
+                if c.t_is_minus_2o {
+                    t.wrong_minus_2o += 1;
+                }
             }
         }
         if sim.phase & mask != 0 {
@@ -164,6 +174,7 @@ fn run(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &[Case], s
             t.ancilla_batches += 1;
         }
         t.shots += bs;
+        t.lanes += 64;
     }
     t
 }
@@ -184,7 +195,9 @@ fn run_parallel(ops: &[Op], regs: &[Vec<QubitOrBit>], nq: u64, nb: u64, cases: &
     });
     parts.iter().fold(Tally::default(), |a, b| Tally {
         shots: a.shots + b.shots,
+        lanes: a.lanes + b.lanes,
         wrong: a.wrong + b.wrong,
+        wrong_minus_2o: a.wrong_minus_2o + b.wrong_minus_2o,
         phase_batches: a.phase_batches + b.phase_batches,
         ancilla_batches: a.ancilla_batches + b.ancilla_batches,
         toffoli: a.toffoli + b.toffoli,
@@ -313,22 +326,23 @@ fn main() {
     for (name, cases) in classes {
         let t = run_parallel(&ops, &regs, nq, nb, cases, threads, seed.as_bytes());
         println!(
-            "{name:<18}: {:>6} shots, {:>6} wrong, {} phase-dirty batches, {} ancilla-dirty batches, avg Toffoli {:.1}",
+            "{name:<18}: {:>6} shots, {:>6} wrong ({} with T = -2O), {} phase-dirty batches, {} ancilla-dirty batches, avg Toffoli {:.1}",
             t.shots,
             t.wrong,
+            t.wrong_minus_2o,
             t.phase_batches,
             t.ancilla_batches,
-            t.toffoli as f64 / t.shots.max(1) as f64
+            t.toffoli as f64 / t.lanes.max(1) as f64
         );
         if name == "random" {
             random_tally = t;
         }
         rows.push(format!(
-            "{{\"class\":\"{name}\",\"shots\":{},\"wrong\":{},\"phase_dirty_batches\":{},\"ancilla_dirty_batches\":{}}}",
-            t.shots, t.wrong, t.phase_batches, t.ancilla_batches
+            "{{\"class\":\"{name}\",\"shots\":{},\"wrong\":{},\"wrong_t_minus_2o\":{},\"phase_dirty_batches\":{},\"ancilla_dirty_batches\":{}}}",
+            t.shots, t.wrong, t.wrong_minus_2o, t.phase_batches, t.ancilla_batches
         ));
     }
-    let avg = random_tally.toffoli as f64 / random_tally.shots as f64;
+    let avg = random_tally.toffoli as f64 / random_tally.lanes as f64;
     let clean = random_tally.phase_batches == 0 && random_tally.ancilla_batches == 0;
     let p_hat = if clean { 1.0 - random_tally.wrong as f64 / random_tally.shots as f64 } else { 0.0 };
     let qxt_avg = nq as f64 * avg;

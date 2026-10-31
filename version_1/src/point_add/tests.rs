@@ -259,3 +259,41 @@ fn point_add_small_curve() {
         assert_eq!((out[0][i], out[1][i]), affine_add(tv[i], ov[i]), "{:?} + {:?}", tv[i], ov[i]);
     }
 }
+
+/// Prints the Toffoli cost of each component at n = 256 (`--ignored --nocapture`).
+#[test]
+#[ignore]
+fn cost_breakdown() {
+    use super::gates::G;
+    let f = Field { p: U256::from_str_radix(super::SECP256K1_P, 16).unwrap(), n: 256 };
+    let count = |b: &Builder| b.gates.iter().filter(|g| matches!(g, G::And(..) | G::Ccx(..))).count();
+    let measure = |name: &str, build: &dyn Fn(&mut Builder)| {
+        let mut b = Builder::new();
+        build(&mut b);
+        eprintln!("{name:<28} {:>9} Toffolis, width {}", count(&b), b.width());
+    };
+    measure("field add", &|b| {
+        let (a, t) = (b.alloc_n(256), b.alloc_n(256));
+        f.add(b, &a, &t)
+    });
+    measure("field halve", &|b| {
+        let mut t = b.alloc_n(256);
+        f.halve(b, &mut t)
+    });
+    measure("gcd step (fwd)", &|b| {
+        let (u, mut v, o, s) = (b.alloc_n(256), b.alloc_n(256), b.alloc(), b.alloc());
+        super::divide::gcd_step_for_cost(b, &u, &mut v, o, s)
+    });
+    measure("target step", &|b| {
+        let (mut a, mut be, o, s) = (b.alloc_n(256), b.alloc_n(256), b.alloc(), b.alloc());
+        super::divide::target_step_for_cost(&f, b, &mut a, &mut be, o, s)
+    });
+    measure("divide", &|b| {
+        let (x, y) = (b.alloc_n(256), b.alloc_n(256));
+        divide(&f, b, &x, y);
+    });
+    measure("sub_square", &|b| {
+        let (a, t) = (b.alloc_n(256), b.alloc_n(256));
+        f.sub_square(b, &a, &t)
+    });
+}

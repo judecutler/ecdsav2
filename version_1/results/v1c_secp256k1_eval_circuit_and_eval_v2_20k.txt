@@ -1,0 +1,40 @@
+-- correctness tests (9024 shots) --
+  tested shots            : 9024
+  classical mismatches    : 0
+  phase-garbage batches   : 0
+  ancilla-garbage batches : 0
+  all 9024 shots OK
+
+=== circuit metrics (secp256k1, n=256) ===
+  avg executed Toffoli  : 4787186.000
+  avg executed Clifford : 29405049.489
+  total Toffoli (sum)   : 43199566464 over 9024 shots
+  total Clifford (sum)  : 265351166588
+  emitted ops           : 39553298
+  qubits                : 2559
+
+=== experiment OK ===
+
+real	4m55.908s
+user	4m50.216s
+sys	0m1.713s
+=== eval_v2 (QCB v2 proxy) ===
+curve            : secp256k1
+qubits (width)   : 2559
+ops              : 39553298
+Toffoli ops      : 4787186 (worst case per shot)
+  conditioned    : 0
+conditioned ops  : 4001266 (2560 on offset bits)
+bit-logic ops    : 0
+random            :  20000 shots,      0 wrong, 0 phase-dirty batches, 0 ancilla-dirty batches, avg Toffoli 4794845.5
+small-multiples   :    528 shots,     12 wrong, 3 phase-dirty batches, 8 ancilla-dirty batches, avg Toffoli 5222384.7
+near-order        :     93 shots,      3 wrong, 1 phase-dirty batches, 1 ancilla-dirty batches, avg Toffoli 6588815.1
+exceptional T=-2O :     64 shots,     64 wrong, 1 phase-dirty batches, 1 ancilla-dirty batches, avg Toffoli 4787186.0
+Q x T (v1 avg)   : 1.2270e10
+Q x T (worst)    : 1.2250e10
+p-hat (random)   : 1.000000
+Q x T_worst / p  : 1.2250e10
+
+real	9m31.517s
+user	10m46.435s
+sys	0m1.513s
