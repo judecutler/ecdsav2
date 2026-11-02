@@ -1,0 +1,13 @@
+field add                         1022 Toffolis,      2044 coherent, width 769
+field halve                        511 Toffolis,      1022 coherent, width 514
+gcd step (fwd)                    1024 Toffolis,      1535 coherent, width 770
+target step                       2047 Toffolis,      3580 coherent, width 772
+divide                         1892736 Toffolis,   3127552 coherent, width 1600
+point_add                      4381938 Toffolis,   7381988 coherent, width 2112
+point_add classical addend     4381938 Toffolis,   7381988 coherent, width 1600
+ctl_sub (integer)                  511 Toffolis,       766 coherent, width 768
+field ctl_sub                     1280 Toffolis,      2302 coherent, width 770
+less_than ctl                      257 Toffolis,       513 coherent, width 770
+cswap                              256 Toffolis,       256 coherent, width 513
+sub_square                      588290 Toffolis,   1110532 coherent, width 1026
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 2.16s

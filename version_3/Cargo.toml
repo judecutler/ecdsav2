@@ -1,0 +1,32 @@
+[package]
+name = "quantum_ecc"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "build_circuit"
+path = "src/bin/build_circuit.rs"
+
+[[bin]]
+name = "eval_circuit"
+path = "src/bin/eval_circuit.rs"
+
+# QCB addition: v2-proxy evaluator (not part of the upstream contract).
+[[bin]]
+name = "eval_v2"
+path = "src/bin/eval_v2.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
+
+[dependencies]
+alloy-primitives = "1.5"
+ruint = "1.12"
+sha3 = "0.10"
+zstd = "0.13"

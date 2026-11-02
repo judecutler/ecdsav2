@@ -1,0 +1,37 @@
+# Offline twin of ../Cargo.toml. It compiles the same, unchanged sources
+# (../src) against small local stand-ins for the four registry crates, for
+# sandboxes where crates.io is unreachable. Scores match the real build:
+# the shims reproduce U256 arithmetic and SHAKE256 exactly, and only the
+# compression of ops.bin differs (stored instead of zstd), which the score
+# does not depend on.
+[package]
+name = "quantum_ecc"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "../src/lib.rs"
+
+[[bin]]
+name = "build_circuit"
+path = "../src/bin/build_circuit.rs"
+
+[[bin]]
+name = "eval_circuit"
+path = "../src/bin/eval_circuit.rs"
+
+[[bin]]
+name = "eval_v2"
+path = "../src/bin/eval_v2.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
+
+[dependencies]
+alloy-primitives = { path = "shims/alloy-primitives" }
+ruint = { path = "shims/ruint" }
+sha3 = { path = "shims/sha3" }
+zstd = { path = "shims/zstd" }
