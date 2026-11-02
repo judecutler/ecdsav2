@@ -1,0 +1,48 @@
+=== quantum_ecc: build_circuit (untrusted stage) ===
+
+-- building circuit --
+  builder     : width 1600 qubits, 4381938 Toffolis (7381988 with coherent AND uncomputation), coherent lowering
+  emitted ops : 33613680
+  wrote       : ops.bin (1882366096 bytes on disk, 1882366096 uncompressed, 1.0x)
+
+=== build_circuit OK ===
+=== quantum_ecc: eval_circuit (trusted stage) ===
+
+  loaded ops  : 33613680
+  qubits      : 1600
+  bits        : 512
+
+-- correctness tests (9024 shots) --
+  tested shots            : 9024
+  classical mismatches    : 0
+  phase-garbage batches   : 0
+  ancilla-garbage batches : 0
+  all 9024 shots OK
+
+=== circuit metrics (secp256k1, n=256) ===
+  avg executed Toffoli  : 7381988.000
+  avg executed Clifford : 22947996.000
+  total Toffoli (sum)   : 66615059712 over 9024 shots
+  total Clifford (sum)  : 207082715904
+  emitted ops           : 33613680
+  qubits                : 1600
+
+=== experiment OK ===
+=== eval_v2 (QCB v2 proxy) ===
+curve            : secp256k1
+qubits (width)   : 1600
+ops              : 33613680
+Toffoli ops      : 7381988 (worst case per shot)
+  conditioned    : 0
+conditioned ops  : 2560 (2560 on offset bits)
+bit-logic ops    : 0
+addend           : classical bits
+measurements     : none (forward∘reverse checked)
+random            :   2000 shots | W    0 (0 with T = -2O) | A   0 | P   0 | reverse-bad   0 | avg Toffoli 7381988.0
+small-multiples   :    528 shots | W   12 (12 with T = -2O) | A   0 | P   0 | reverse-bad   0 | avg Toffoli 7381988.0
+near-order        :     93 shots | W    3 (3 with T = -2O) | A   0 | P   0 | reverse-bad   0 | avg Toffoli 7381988.0
+exceptional T=-2O :     64 shots | W   64 (64 with T = -2O) | A   0 | P   0 | reverse-bad   0 | avg Toffoli 7381988.0
+Q x T (v1 avg)   : 1.1811e10
+Q x T (worst)    : 1.1811e10
+random-class 95% UB : eps_W+A 1.497e-3, eps_P 1.497e-3 (from 2000 shots, 0 W/A, 0 P)
+C-AMP P_run (k=28) : 0.7774  -> priced Q x T_worst 1.5193e10; 90% gate FAIL
