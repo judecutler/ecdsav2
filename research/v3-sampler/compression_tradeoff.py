@@ -70,8 +70,12 @@ def run():
             runs = 1 / (1 - p0) if p0 < 1 else float("inf")
             print(f"    {b:3d}   |   {ncells:4d}      |     {p0:.4f}          |      {pred:.4f}            |   {runs:.2f}")
     print("\n" + "=" * 84)
-    print("Reading: one bit ~ halves useful runs; each extra bit ~halves P(useless) until it")
-    print("hits the 1/r full-register floor. The paper reports this as a tunable space/runs dial.")
+    print("Reading (report the MEASURED column, not the 1/2^b bound): the predicted max(1/2^b,1/r)")
+    print("is the best case of equal, independent cells. Real projective-invariant Legendre bits")
+    print("are strongly CORRELATED, so measured P(useless) sits well above 1/2^b and does not halve")
+    print("per bit (e.g. F97 b=1 and b=2 are identical: a whole extra bit bought nothing). The honest")
+    print("claim: widening the readout lowers P(useless) monotonically toward the 1/r full-register")
+    print("floor, but the rate is readout-dependent and must be measured, not assumed to be 1/2^b.")
     print("=" * 84)
 
 

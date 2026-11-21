@@ -39,6 +39,8 @@ def check(name, q):
 
 
 if __name__ == "__main__":
-    ok = all([check(n, q) for q in (5, 7, 11, 13) for n in OPS])
+    # q in {5,7,11,13} are tiny (width <=4); 23 and 97 are the widths proj_add actually
+    # uses downstream (reviewer flag 4), so the standalone exhaustive guarantee covers them too.
+    ok = all([check(n, q) for q in (5, 7, 11, 13, 23, 97) for n in OPS])
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)

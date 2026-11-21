@@ -252,7 +252,11 @@ def full_distribution_no_assumption(gvals, r, d):
 
 
 def recover_d(joint, r):
-    """From any (u,v) with gcd(u,r)=1, d = v * u^{-1} mod r. Check all agree."""
+    """From any (u,v) with gcd(u,r)=1, d = v * u^{-1} mod r. Check all agree.
+    NOTE (reviewer flag 2): `joint` was built with v hardcoded to (d*u)%r, so reading d back
+    off it is circular on its own. The NON-circular proof of exact recovery is
+    `full_distribution_no_assumption` (off-line mass ~0); `recover_d` only confirms the line's
+    slope is consistent. The run() gate requires BOTH, so cite the off/on check as the evidence."""
     ds = set()
     for (u, v), p in joint.items():
         if math.gcd(u, r) == 1:
