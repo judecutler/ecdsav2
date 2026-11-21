@@ -6,7 +6,9 @@ A bot or person resuming this work: read **Status** and **Next step** first. Eve
 Build and validate the ECDSA.fail v3 research direction: a discrete-log sampler that (a) never computes the elliptic-curve point in affine form, (b) uses no modular inversion, (c) reads out a single projective-invariant bit. If this works it changes the benchmark's whole cost basis (no point register, no inverter). Build step 1 = prove the representational core on a toy curve before any circuit.
 
 ## Status (2026-11-21)
-**Phase A COMPLETE — PASS. Go for Phase B.**
+**Phase A COMPLETE (PASS). Phase A+ COMPLETE. Phase B PARTIAL (generic domain verified; exceptional branches + readout deferred).**
+
+Next unit = Phase B2: reversible exceptional-case handling + the inversion-free Legendre readout (see "Next step").
 
 `sampler_toy.py` validated the core claim on 4 toy curves (F23, F41, F97, F211). Run it:
 ```
@@ -20,12 +22,19 @@ What is proven (exactly, by exhaustive/analytic computation, not sampling):
 3. **Compression cost, quantified.** A balanced single-bit readout puts ~1/2 the probability on the useless `u=0` outcome, vs `1/r` for a full point register. So single-bit compression costs ~2x in run count. Reducible by reading out a few bits instead of one (k-bit compression) — a Phase B+ knob.
 
 ## Next step
-**Phase B: the reversible circuit.** Express the inversion-free projective point addition (and a windowed scalar multiplication) as a reversible circuit in the challenge gate set (X/CX/CCX), and verify it against `sampler_toy.py`'s `proj_add`/`proj_mul`/`g_projective` with a bit-sliced simulator, exhaustively over inputs on a toy curve. Named data shape: the circuit state is the projective triple `(X:Y:Z)` over `F_q` in RNS residue channels; the readout is one `legendre` circuit (inversion-free, CFS-style). Delegate to the feature model in its own worktree. Gate: the circuit's simulated output must equal `g_projective` for every `k`.
+**Phase B2: close the circuit to a full readout.** Two pieces, each verified against `sampler_toy.py` with the bit-sliced simulator before moving on (principle-sequence-verifiable-units):
+1. **Exceptional cases, reversibly.** `proj_add` today covers the generic branch only. Add the reference's exceptional branches (either input at infinity Z=0; P2 = +-P1, i.e. doubling and P + -P) as a FIXED gate list, using a reversible compare (V1==V2, U1==U2, Z==0) plus controlled select between the add-formula and the double-formula outputs. Then build `proj_dbl` and compose `proj_mul` (windowed or double-and-add). Gate: matches `sampler_toy.proj_mul` for all k on a toy curve, clean ancillas.
+2. **Inversion-free Legendre readout.** One circuit computing the bit `g(k) = [legendre_q((X-cZ)Z) == -1]` from the projective triple, with no inversion. For the toy, `legendre` via modular exponentiation (square-and-multiply = a chain of `modmul`) is fine and stays inversion-free. Gate: the circuit's output bit equals `sampler_toy.g_projective` (and `compression_tradeoff.readout_bits`) for every k.
 
-Open design choices for Phase B (settle by prototype, not by asking):
-- Standard projective vs Jacobian vs CFS's exact RNS integer-lift. Start with standard projective (formulas already in `sampler_toy.py`), add RNS only when the toy works.
-- One output bit vs k bits (trades circuit size for run count; Phase A shows the curve).
-- Whether to window the scalar mult now or after a single projective add is verified.
+Open design choices (settle by prototype, not by asking):
+- Standard projective (done) vs CFS's exact RNS integer-lift. Add RNS only when the standard toy readout works end to end; RNS is the space-optimization, not the correctness core.
+- One output bit vs k bits: `compression_tradeoff.py` already gives the run-count curve; pick k from the target.
+- Window the scalar mult vs double-and-add: double-and-add first (simpler oracle), window later.
+
+Phase B results so far (branch merged into v3-research):
+- `circuit/modarith.py`: out-of-place `modadd/modsub/modmul` mod q, inversion-free (shift-add), exhaustively verified q in {5,7,11,13}, clean ancillas. CCX: modadd 72-96, modsub 48-64, modmul 882-1568.
+- `circuit/projadd.py`: generic projective add, verified projectively vs `sampler_toy.proj_add` (F23: 676 cases; F97: 9604 cases; 0 mismatches; inputs preserved; clean). Fixed gate list, no classical branching.
+- Harness has teeth: a mutation breaking the mod reduction makes the exhaustive test report errors (checked this session).
 
 ## Files
 - `sampler_toy.py` — Phase A validation. The reference implementation of every piece Phase B must reproduce reversibly. Self-checking (asserts).
