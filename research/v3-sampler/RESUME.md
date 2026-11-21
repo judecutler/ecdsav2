@@ -37,3 +37,11 @@ Open design choices for Phase B (settle by prototype, not by asking):
 - The sandbox is ephemeral between sessions; the branch on the fork is the source of truth. Re-clone `judecutler/ecdsav2`, `git checkout v3-research`.
 - Toy curves use tiny prime-order r (3..23). That is intentional: it lets us compute the *exact* distribution, not sample it. Do not "scale up r" to feel more confident; the derivation is general and the small-r exactness is the stronger evidence.
 - Keep the affine path in `sampler_toy.py` as the oracle. Never let the inversion-free path drift from it without the per-k equality check.
+
+## Phase B (reversible circuit prototype, branch v3-phaseB-circuit)
+`circuit/` holds a reversible circuit builder (X/CX/CCX/SWAP), a bit-sliced simulator, and
+out-of-place mod-q `modadd`/`modsub`/`modmul` (no inversion), exhaustively verified for
+q in {5,7,11,13}. `proj_add` reproduces `sampler_toy.proj_add` projectively on F_23 and F_97.
+**DEFERRED (not done):** the exceptional branches (infinity inputs, P2 = +-P1 i.e. doubling and
+P + -P). `proj_add` is verified on the GENERIC domain only. Also not done: `proj_dbl`, `proj_mul`,
+Legendre readout. Run: `python3 -I circuit/test_modarith.py && python3 -I circuit/test_projadd.py`.
